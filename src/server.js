@@ -41,7 +41,7 @@ const io = new Server(server, {
   }
 });
 
-// 3. Configure Express CORS Middleware & Preflight Options
+// 3. Configure Express CORS Middleware
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
