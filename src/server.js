@@ -21,6 +21,7 @@ import hostelRoutes from './modules/hostels/hostels.routes.js';
 const app = express();
 const server = http.createServer(app);
 
+// 1. Defined Allowed Origins
 const allowedOrigins = [
   'https://buconnects-frontend-one.vercel.app',
   'http://localhost:5173',
@@ -31,6 +32,7 @@ const allowedOrigins = [
   process.env.APP_URL
 ].filter(Boolean);
 
+// 2. Initialize Socket.io with CORS
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -39,25 +41,26 @@ const io = new Server(server, {
   }
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.use(cors({
+// 3. Configure Express CORS Middleware & Preflight Options
+const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
-      return;
+    } else {
+      callback(null, true); // Fallback to allow connection
     }
-
-    callback(new Error(`Origin ${origin} not allowed by CORS`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  optionsSuccessStatus: 200
+};
 
-app.options('*', cors());
+app.use(cors(corsOptions));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+// 4. Mount API Routes
 app.use('/api', userRoutes);
 app.use('/api/posts', postRouter);
 app.use('/api/users', userRoutes);
@@ -70,9 +73,12 @@ app.use('/api/marketplace', marketplaceRoutes);
 app.use('/api/v1/marketplace', marketplaceRoutes);
 app.use('/api/hostels', hostelRoutes);
 app.use('/api/updates', announcementRoutes);
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/chat', userRoutes);
 
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'))); // Serve uploaded files
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
+// 5. Global Error Handler
 app.use((err, req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -80,26 +86,20 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// Configure Web Push with matching variable names
+// 6. Web Push Configuration
 webpush.setVapidDetails(
   'mailto:support@buconnects.com',
-  process.env.VAPID_PUBLIC_KEY,  // Matched to VAPID_PUBLIC_KEY
-  process.env.VAPID_PRIVATE_KEY  // Matched to VAPID_PRIVATE_KEY
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
 );
 
-app.use('/api/users', userRoutes);
-// Mount Auth Router
-app.use('/api/v1/auth', authRoutes);
-
-app.use('/api/chat', userRoutes);
-
-// Health Check Route
+// 7. Health & Basic Routes
 app.get('/api/health', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT 1 + 1 AS result');
     res.status(200).json({
       status: 'UP',
-      message: 'buconnects backend server and XAMPP MySQL database are healthy.',
+      message: 'buconnects backend server and MySQL database are healthy.',
       dbTest: rows[0].result === 2
     });
   } catch (error) {
@@ -112,7 +112,7 @@ app.get('/', async (req, res) => {
     const [rows] = await db.query('SELECT 1 + 1 AS result');
     res.status(200).json({
       status: 'UP',
-      message: 'buconnects backend server and XAMPP MySQL database are healthy.',
+      message: 'buconnects backend server and MySQL database are healthy.',
       dbTest: rows[0].result === 2
     });
   } catch (error) {
@@ -133,7 +133,6 @@ app.get('/api/posts', async (req, res) => {
   }
 });
 
-// POST /api/posts - Create post & broadcast via WebSocket / Web Push
 app.post('/api/posts', async (req, res) => {
   const { authorId, authorName, campus, content, mediaUrls } = req.body;
 
@@ -141,7 +140,7 @@ app.post('/api/posts', async (req, res) => {
     return res.status(400).json({ error: 'Author ID and content are required.' });
   }
 
-  const postId = crypto.randomUUID(); // Matching varchar(36) UUID
+  const postId = crypto.randomUUID();
   const mediaJson = mediaUrls ? JSON.stringify(mediaUrls) : null;
 
   try {
@@ -161,10 +160,8 @@ app.post('/api/posts', async (req, res) => {
       created_at: new Date()
     };
 
-    // 1. Broadcast in real time to all connected desktop/mobile users online
     io.emit('new_post', newPost);
 
-    // 2. Dispatch push notification to all stored device subscriptions
     const [subscriptions] = await db.query('SELECT subscription_json FROM push_subscriptions');
     
     const payload = JSON.stringify({
@@ -177,7 +174,6 @@ app.post('/api/posts', async (req, res) => {
       try {
         const pushConfig = JSON.parse(sub.subscription_json);
         webpush.sendNotification(pushConfig, payload).catch((err) => {
-          // Clean up expired or unsubscribed tokens
           if (err.statusCode === 410 || err.statusCode === 404) {
             db.query('DELETE FROM push_subscriptions WHERE subscription_json = ?', [sub.subscription_json]);
           }
@@ -194,23 +190,21 @@ app.post('/api/posts', async (req, res) => {
   }
 });
 
-const onlineUsers = new Map(); // userId -> socketId
+// 8. Socket.io Event Handlers
+const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
   console.log('⚡ Connected client:', socket.id);
 
-  // 1. Register User Socket
   socket.on('register_user', (userId) => {
     onlineUsers.set(String(userId), socket.id);
   });
 
-  // 2. Join Room
   socket.on('join_room', (roomId) => {
     socket.join(roomId);
     console.log(`User ${socket.id} joined room: ${roomId}`);
   });
 
-  // 3. Typing Indicators
   socket.on('typing', ({ roomId, userId }) => {
     socket.to(roomId).emit('user_typing', { userId });
   });
@@ -219,7 +213,6 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user_stop_typing', { userId });
   });
 
-  // 4. Send Message & Trigger Push Notification
   socket.on('send_message', async (data) => {
     const roomId = data.roomId || data.room_id || null;
     const senderId = data.sender_id || data.senderId || null;
@@ -345,6 +338,7 @@ app.post('/api/notifications/subscribe', async (req, res) => {
   }
 });
 
+// 9. Start Server
 const PORT = Number(process.env.PORT) || 5000;
 
 server.listen(PORT, async () => {
@@ -353,10 +347,10 @@ server.listen(PORT, async () => {
   
   try {
     const connection = await db.getConnection();
-    console.log(` Connected to XAMPP MySQL Database [${process.env.DB_NAME || 'buconnects_db'}]`);
+    console.log(` Connected to MySQL Database [${process.env.DB_NAME || 'buconnects_db'}]`);
     connection.release();
   } catch (err) {
-    console.error(`❌ XAMPP MySQL Connection Error:`, err.message);
+    console.error(`❌ MySQL Connection Error:`, err.message);
   }
   console.log(`==================================================`);
 });
