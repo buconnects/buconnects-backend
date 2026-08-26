@@ -20,23 +20,28 @@ import hostelRoutes from './modules/hostels/hostels.routes.js';
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
-});
 
 const allowedOrigins = [
+  'https://buconnects-frontend-one.vercel.app',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://localhost:3000',
   process.env.CLIENT_URL,
   process.env.FRONTEND_URL,
   process.env.APP_URL
 ].filter(Boolean);
 
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -47,10 +52,11 @@ app.use(cors({
     callback(new Error(`Origin ${origin} not allowed by CORS`));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.options('*splat', cors());
+
+app.options('*', cors());
 
 app.use('/api', userRoutes);
 app.use('/api/posts', postRouter);
@@ -188,23 +194,11 @@ app.post('/api/posts', async (req, res) => {
   }
 });
 
-io.on('connection', (socket) => {
-  console.log('User connected to socket:', socket.id);
-
-  // Join a specific chat room (e.g., room between two users or group room)
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    console.log(`User ${socket.id} joined room: ${roomId}`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
-
 const onlineUsers = new Map(); // userId -> socketId
 
 io.on('connection', (socket) => {
+  console.log('⚡ Connected client:', socket.id);
+
   // 1. Register User Socket
   socket.on('register_user', (userId) => {
     onlineUsers.set(String(userId), socket.id);
@@ -213,6 +207,7 @@ io.on('connection', (socket) => {
   // 2. Join Room
   socket.on('join_room', (roomId) => {
     socket.join(roomId);
+    console.log(`User ${socket.id} joined room: ${roomId}`);
   });
 
   // 3. Typing Indicators
@@ -225,110 +220,103 @@ io.on('connection', (socket) => {
   });
 
   // 4. Send Message & Trigger Push Notification
-socket.on('send_message', async (data) => {
-  // 1. Extract with property fallbacks to prevent undefined values
-  const roomId = data.roomId || data.room_id || null;
-  const senderId = data.sender_id || data.senderId || null;
-  const receiverId = data.receiver_id || data.receiverId || null;
-  const messageText = data.message || data.content || '';
-  const senderName = data.senderName || data.sender_name || 'New Message';
-  const messageType = data.message_type || data.messageType || 'text';
-  const fileUrl = data.file_url || data.fileUrl || null;
-  const fileName = data.file_name || data.fileName || null;
+  socket.on('send_message', async (data) => {
+    const roomId = data.roomId || data.room_id || null;
+    const senderId = data.sender_id || data.senderId || null;
+    const receiverId = data.receiver_id || data.receiverId || null;
+    const messageText = data.message || data.content || '';
+    const senderName = data.senderName || data.sender_name || 'New Message';
+    const messageType = data.message_type || data.messageType || 'text';
+    const fileUrl = data.file_url || data.fileUrl || null;
+    const fileName = data.file_name || data.fileName || null;
 
-  // Guard against missing required fields
-  if (!roomId || !senderId || !receiverId || (!messageText && !fileUrl)) {
-    console.error('Missing required fields in send_message payload:', { roomId, senderId, receiverId });
-    return;
-  }
+    if (!roomId || !senderId || !receiverId || (!messageText && !fileUrl)) {
+      console.error('Missing required fields in send_message payload:', { roomId, senderId, receiverId });
+      return;
+    }
 
-  // Persist to MySQL database & trigger Push Notifications
-  try {
-    const sql = `
-      INSERT INTO messages (room_id, sender_id, receiver_id, message, message_type, file_url, file_name, is_read, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW())
-    `;
+    try {
+      const sql = `
+        INSERT INTO messages (room_id, sender_id, receiver_id, message, message_type, file_url, file_name, is_read, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW())
+      `;
 
-    const [result] = await db.execute(sql, [
-      roomId,
-      senderId,
-      receiverId,
-      messageText,
-      messageType,
-      fileUrl,
-      fileName
-    ]);
-
-    // Construct full message object WITH database ID and ALL attachment fields
-    const fullMessagePayload = {
-      id: result.insertId,
-      room_id: roomId,
-      sender_id: senderId,
-      receiver_id: receiverId,
-      message: messageText,
-      message_type: messageType, // Included for socket receiver
-      file_url: fileUrl,         // Included for socket receiver
-      file_name: fileName,       // Included for socket receiver
-      is_read: false,
-      created_at: new Date().toISOString()
-    };
-
-    // ✅ Broadcast COMPLETE payload to everyone in the room
-    io.to(roomId).emit('receive_message', fullMessagePayload);
-
-    await db.execute(
-      `INSERT INTO notifications (user_id, title, message, is_read, created_at)
-       VALUES (?, ?, ?, FALSE, NOW())`,
-      [receiverId, 'New message', `${senderName} sent you a message.`]
-    );
-
-    const receiverSocketId = onlineUsers.get(String(receiverId));
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('new_notification', {
-        title: 'New message',
-        message: `${senderName} sent you a message.`,
-        type: 'message',
+      const [result] = await db.execute(sql, [
         roomId,
         senderId,
-        createdAt: new Date().toISOString(),
-      });
+        receiverId,
+        messageText,
+        messageType,
+        fileUrl,
+        fileName
+      ]);
+
+      const fullMessagePayload = {
+        id: result.insertId,
+        room_id: roomId,
+        sender_id: senderId,
+        receiver_id: receiverId,
+        message: messageText,
+        message_type: messageType,
+        file_url: fileUrl,
+        file_name: fileName,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+
+      io.to(roomId).emit('receive_message', fullMessagePayload);
+
+      await db.execute(
+        `INSERT INTO notifications (user_id, title, message, is_read, created_at)
+         VALUES (?, ?, ?, FALSE, NOW())`,
+        [receiverId, 'New message', `${senderName} sent you a message.`]
+      );
+
+      const receiverSocketId = onlineUsers.get(String(receiverId));
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit('new_notification', {
+          title: 'New message',
+          message: `${senderName} sent you a message.`,
+          type: 'message',
+          roomId,
+          senderId,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      let pushBody = messageText;
+      if (!pushBody && fileUrl) {
+        pushBody = messageType === 'image' ? '📷 Sent an image' : '📁 Sent an attachment';
+      }
+
+      const [rows] = await db.execute(
+        'SELECT subscription_json FROM push_subscriptions WHERE user_id = ?',
+        [receiverId]
+      );
+
+      if (rows.length > 0 && rows[0].subscription_json) {
+        const subscription = typeof rows[0].subscription_json === 'string'
+          ? JSON.parse(rows[0].subscription_json)
+          : rows[0].subscription_json;
+
+        const payload = JSON.stringify({
+          title: senderName,
+          body: pushBody,
+          icon: '/icon.png',
+          data: { url: `/chat?room=${roomId}` }
+        });
+
+        webpush.sendNotification(subscription, payload).catch((err) => {
+          console.error('Push error:', err.message);
+        });
+      }
+    } catch (err) {
+      console.error('DB/Push error:', err);
     }
-
-    // Push notification text fallback for file attachments
-    let pushBody = messageText;
-    if (!pushBody && fileUrl) {
-      pushBody = messageType === 'image' ? '📷 Sent an image' : '📁 Sent an attachment';
-    }
-
-    // Check if receiver has an active push subscription in DB
-    const [rows] = await db.execute(
-      'SELECT subscription_json FROM push_subscriptions WHERE user_id = ?',
-      [receiverId]
-    );
-
-    if (rows.length > 0 && rows[0].subscription_json) {
-      const subscription = typeof rows[0].subscription_json === 'string'
-        ? JSON.parse(rows[0].subscription_json)
-        : rows[0].subscription_json;
-
-      const payload = JSON.stringify({
-        title: senderName,
-        body: pushBody,
-        icon: '/icon.png',
-        data: { url: `/chat?room=${roomId}` }
-      });
-
-      // Trigger Web Push Notification asynchronously
-      webpush.sendNotification(subscription, payload).catch((err) => {
-        console.error('Push error:', err.message);
-      });
-    }
-  } catch (err) {
-    console.error('DB/Push error:', err);
-  }
-});
+  });
 
   socket.on('disconnect', () => {
+    console.log(`❌ Client disconnected: ${socket.id}`);
     for (let [userId, socketId] of onlineUsers.entries()) {
       if (socketId === socket.id) {
         onlineUsers.delete(userId);
@@ -355,14 +343,6 @@ app.post('/api/notifications/subscribe', async (req, res) => {
     console.error('Subscription error:', err);
     res.status(500).json({ error: 'Failed to save subscription.' });
   }
-});
-
-io.on('connection', (socket) => {
-  console.log(`⚡ Connected client: ${socket.id}`);
-
-  socket.on('disconnect', () => {
-    console.log(`❌ Client disconnected: ${socket.id}`);
-  });
 });
 
 const PORT = Number(process.env.PORT) || 5000;
