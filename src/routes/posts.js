@@ -130,7 +130,7 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
   let responseMediaUrl = null;
 
   if (req.file) {
-    responseMediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    responseMediaUrl = `/uploads/${req.file.filename}`;
     mediaUrlArray = JSON.stringify([responseMediaUrl]); 
   }
 
@@ -162,6 +162,90 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
   } catch (error) {
     console.error('Error creating post:', error);
     res.status(500).json({ error: 'Failed to create post.' });
+  }
+});
+
+// TOGGLE LIKE ON A POST
+router.post('/:id/like', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  const userId = req.user.id;
+  const userName = req.user.fullName || req.user.userName || req.user.name || 'Someone';
+
+  try {
+    // Check if the user already liked the post
+    const [existing] = await pool.execute(
+      'SELECT id FROM post_likes WHERE post_id = ? AND user_id = ?',
+      [postId, userId]
+    );
+
+    if (existing.length > 0) {
+      // User already liked it -> Unlike
+      await pool.execute('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
+      return res.status(200).json({ message: 'Unliked successfully', isLiked: false });
+    } else {
+      // User has not liked it -> Add Like
+      await pool.execute(
+        'INSERT INTO post_likes (id, post_id, user_id, created_at) VALUES (?, ?, ?, NOW())',
+        [randomUUID(), postId, userId]
+      );
+
+      // Send notification to post author
+      await notifyPostAuthor({
+        postId,
+        actorId: userId,
+        title: 'New Like',
+        message: `${userName} liked your post.`
+      });
+
+      return res.status(200).json({ message: 'Liked successfully', isLiked: true });
+    }
+  } catch (error) {
+    console.error('Error toggling like:', error);
+    return res.status(500).json({ error: 'Failed to toggle like.' });
+  }
+});
+
+// ADD A COMMENT TO A POST
+router.post('/:id/comments', authenticate, async (req, res) => {
+  const postId = req.params.id;
+  const userId = req.user.id;
+  const { content, comment } = req.body;
+  const commentText = content || comment;
+  const userName = req.user.fullName || req.user.userName || req.user.name || 'Someone';
+
+  if (!commentText || !commentText.trim()) {
+    return res.status(400).json({ error: 'Comment content is required.' });
+  }
+
+  try {
+    const commentId = randomUUID();
+    await pool.execute(
+      `INSERT INTO post_comments (id, post_id, author_id, comment, created_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [commentId, postId, userId, commentText.trim()]
+    );
+
+    // Send notification to post author
+    await notifyPostAuthor({
+      postId,
+      actorId: userId,
+      title: 'New Comment',
+      message: `${userName} commented on your post.`
+    });
+
+    const newComment = {
+      id: commentId,
+      postId,
+      authorId: userId,
+      authorName: userName,
+      comment: commentText.trim(),
+      createdAt: new Date()
+    };
+
+    return res.status(201).json(newComment);
+  } catch (error) {
+    console.error('Error adding comment:', error);
+    return res.status(500).json({ error: 'Failed to add comment.' });
   }
 });
 
