@@ -8,14 +8,18 @@ import { randomUUID } from 'crypto';
 const router = express.Router();
 
 const notifyPostAuthor = async ({ postId, actorId, title, message }) => {
-  const [rows] = await pool.execute('SELECT author_id FROM posts WHERE id = ? LIMIT 1', [postId]);
-  const recipientId = rows[0]?.author_id;
-  if (recipientId && String(recipientId) !== String(actorId)) {
-    await pool.execute(
-      `INSERT INTO notifications (user_id, title, message, is_read, created_at)
-       VALUES (?, ?, ?, FALSE, NOW())`,
-      [recipientId, title, message]
-    );
+  try {
+    const [rows] = await pool.execute('SELECT author_id FROM posts WHERE id = ? LIMIT 1', [postId]);
+    const recipientId = rows[0]?.author_id;
+    if (recipientId && String(recipientId) !== String(actorId)) {
+      await pool.execute(
+        `INSERT INTO notifications (user_id, title, message, is_read, created_at)
+         VALUES (?, ?, ?, FALSE, NOW())`,
+        [recipientId, title, message]
+      );
+    }
+  } catch (err) {
+    console.error('Notification error:', err);
   }
 };
 
@@ -31,7 +35,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
       cb(null, true);
@@ -41,7 +45,7 @@ const upload = multer({
   }
 });
 
-// GET ALL POSTS (Made public or optional-auth to prevent unexpected 401s)
+// GET ALL POSTS
 router.get('/', async (req, res) => {
   const currentUserId = req.user?.id || null;
 
@@ -97,7 +101,7 @@ router.get('/', async (req, res) => {
       try {
         parsedMedia = JSON.parse(post.mediaUrls);
       } catch (e) {
-        // Keep string if single URL
+        // Keep as string if single URL
       }
 
       return {
@@ -172,24 +176,20 @@ router.post('/:id/like', authenticate, async (req, res) => {
   const userName = req.user.fullName || req.user.userName || req.user.name || 'Someone';
 
   try {
-    // Check if the user already liked the post
     const [existing] = await pool.execute(
       'SELECT id FROM post_likes WHERE post_id = ? AND user_id = ?',
       [postId, userId]
     );
 
     if (existing.length > 0) {
-      // User already liked it -> Unlike
       await pool.execute('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
       return res.status(200).json({ message: 'Unliked successfully', isLiked: false });
     } else {
-      // User has not liked it -> Add Like
       await pool.execute(
         'INSERT INTO post_likes (id, post_id, user_id, created_at) VALUES (?, ?, ?, NOW())',
         [randomUUID(), postId, userId]
       );
 
-      // Send notification to post author
       await notifyPostAuthor({
         postId,
         actorId: userId,
@@ -225,7 +225,6 @@ router.post('/:id/comments', authenticate, async (req, res) => {
       [commentId, postId, userId, commentText.trim()]
     );
 
-    // Send notification to post author
     await notifyPostAuthor({
       postId,
       actorId: userId,
@@ -246,6 +245,23 @@ router.post('/:id/comments', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error adding comment:', error);
     return res.status(500).json({ error: 'Failed to add comment.' });
+  }
+});
+
+// DELETE A COMMENT
+router.delete('/:id/comments/:commentId', authenticate, async (req, res) => {
+  const { commentId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    await pool.execute(
+      'DELETE FROM post_comments WHERE id = ? AND author_id = ?',
+      [commentId, userId]
+    );
+    res.status(200).json({ message: 'Comment deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting comment:', error);
+    res.status(500).json({ error: 'Failed to delete comment.' });
   }
 });
 
