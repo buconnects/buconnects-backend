@@ -113,18 +113,6 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-const ensureMessageDeletionColumns = async () => {
-  try {
-    await db.execute(`
-      ALTER TABLE messages
-        ADD COLUMN IF NOT EXISTS is_deleted TINYINT(1) DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL
-    `);
-  } catch (error) {
-    console.error('Failed to ensure message deletion columns exist:', error.message);
-  }
-};
-
 app.get('/', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT 1 + 1 AS result');
@@ -226,9 +214,7 @@ io.on('connection', (socket) => {
     try {
       const [result] = await db.execute(
         `UPDATE messages
-         SET is_deleted = TRUE,
-             deleted_at = NOW(),
-             message = 'This message was deleted',
+         SET message = 'This message was deleted',
              message_type = 'text',
              file_url = NULL,
              file_name = NULL
@@ -424,7 +410,6 @@ server.listen(PORT, async () => {
 
   try {
     const connection = await db.getConnection();
-    await ensureMessageDeletionColumns();
     console.log(` Connected to MySQL Database [${process.env.DB_NAME || 'buconnects_db'}]`);
     connection.release();
   } catch (err) {

@@ -104,8 +104,6 @@ router.get('/history/:roomId', async (req, res) => {
         file_url,
         file_name,
         is_read,
-        is_deleted,
-        deleted_at,
         created_at
       FROM messages
       WHERE room_id = ?
