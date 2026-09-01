@@ -1,11 +1,61 @@
 import express from 'express';
 import path from 'path';
 import multer from 'multer';
+import webpush from 'web-push';
 import pool from '../config/db.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 import { randomUUID } from 'crypto';
 
 const router = express.Router();
+
+const optionalAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    req.user = null;
+    return next();
+  }
+
+  return authenticate(req, res, next);
+};
+
+const sendPushNotificationToUser = async (userId, title, body, data = {}) => {
+  if (!userId) return;
+
+  try {
+    const [rows] = await pool.execute(
+      'SELECT subscription_json FROM push_subscriptions WHERE user_id = ?',
+      [userId]
+    );
+
+    for (const row of rows) {
+      if (!row.subscription_json) continue;
+
+      const subscription = typeof row.subscription_json === 'string'
+        ? JSON.parse(row.subscription_json)
+        : row.subscription_json;
+
+      const payload = JSON.stringify({
+        title,
+        body,
+        icon: '/icon.png',
+        badge: '/icon.png',
+        actions: title.toLowerCase().includes('like')
+          ? [{ action: 'view_post', title: 'View post' }]
+          : [{ action: 'open_app', title: 'Open' }],
+        data: { url: data.url || '/dashboard', postUrl: data.url || '/dashboard' },
+      });
+
+      await webpush.sendNotification(subscription, payload).catch((err) => {
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          console.warn('Expired push subscription removed for user:', userId);
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Push notification error:', err);
+  }
+};
 
 const notifyPostAuthor = async ({ postId, actorId, title, message }) => {
   try {
@@ -17,6 +67,8 @@ const notifyPostAuthor = async ({ postId, actorId, title, message }) => {
          VALUES (?, ?, ?, FALSE, NOW())`,
         [recipientId, title, message]
       );
+
+      await sendPushNotificationToUser(recipientId, title, message, { url: '/dashboard' });
     }
   } catch (err) {
     console.error('Notification error:', err);
@@ -46,7 +98,7 @@ const upload = multer({
 });
 
 // GET ALL POSTS
-router.get('/', async (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   const currentUserId = req.user?.id || null;
 
   try {

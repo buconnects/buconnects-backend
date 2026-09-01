@@ -221,6 +221,28 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user_stop_typing', { userId });
   });
 
+  socket.on('mark_as_read', async ({ roomId, readerId, senderId }) => {
+    if (!roomId || !readerId || !senderId) return;
+
+    try {
+      await db.execute(
+        `UPDATE messages
+         SET is_read = TRUE, read_at = NOW()
+         WHERE room_id = ? AND sender_id = ? AND receiver_id = ? AND is_read = FALSE`,
+        [roomId, senderId, readerId]
+      );
+
+      io.to(roomId).emit('messages_marked_read', {
+        roomId,
+        readerId,
+        senderId,
+        readAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error marking messages as read via socket:', error);
+    }
+  });
+
   socket.on('send_message', async (data) => {
     const roomId = data.roomId || data.room_id || null;
     const senderId = data.sender_id || data.senderId || null;
@@ -304,7 +326,10 @@ io.on('connection', (socket) => {
           title: senderName,
           body: pushBody,
           icon: '/icon.png',
-          data: { url: `/chat?room=${roomId}` }
+          actions: [
+            { action: 'open_chat', title: 'Open chat' }
+          ],
+          data: { url: '/dashboard', chatUrl: `/chat?room=${roomId}` }
         });
 
         webpush.sendNotification(subscription, payload).catch((err) => {

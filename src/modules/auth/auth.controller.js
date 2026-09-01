@@ -11,12 +11,10 @@ export const handleRegister = async (req, res) => {
     }
 
     const newUser = await registerUser({ fullName, email, password, role, phoneNumber });
-    const token = generateToken(newUser);
 
     res.status(201).json({
       message: 'User registered successfully',
       user: newUser,
-      token
     });
   } catch (error) {
     console.error('Registration Controller Error:', error);
