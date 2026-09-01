@@ -53,6 +53,8 @@ router.get('/conversations/:userId', async (req, res) => {
         u.id,
         u.full_name AS name,
         u.email,
+        u.avatar_url AS avatar_url,
+        u.avatar_url AS avatarUrl,
         m.message AS lastMessage,
         m.created_at AS lastMessageTime,
         COALESCE(
@@ -102,6 +104,8 @@ router.get('/history/:roomId', async (req, res) => {
         file_url,
         file_name,
         is_read,
+        is_deleted,
+        deleted_at,
         created_at
       FROM messages
       WHERE room_id = ?

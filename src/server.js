@@ -113,6 +113,18 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+const ensureMessageDeletionColumns = async () => {
+  try {
+    await db.execute(`
+      ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS is_deleted TINYINT(1) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL
+    `);
+  } catch (error) {
+    console.error('Failed to ensure message deletion columns exist:', error.message);
+  }
+};
+
 app.get('/', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT 1 + 1 AS result');
@@ -208,6 +220,36 @@ io.on('connection', (socket) => {
     onlineUsers.set(String(userId), socket.id);
   });
 
+  socket.on('delete_message', async ({ roomId, messageId, userId }) => {
+    if (!roomId || !messageId || !userId) return;
+
+    try {
+      const [result] = await db.execute(
+        `UPDATE messages
+         SET is_deleted = TRUE,
+             deleted_at = NOW(),
+             message = 'This message was deleted',
+             message_type = 'text',
+             file_url = NULL,
+             file_name = NULL
+         WHERE id = ? AND sender_id = ? AND room_id = ?`,
+        [messageId, userId, roomId]
+      );
+
+      if (result.affectedRows === 0) return;
+
+      io.to(roomId).emit('message_deleted', {
+        roomId,
+        messageId,
+        userId,
+        deletedAt: new Date().toISOString(),
+        message: 'This message was deleted',
+      });
+    } catch (error) {
+      console.error('Error deleting message via socket:', error);
+    }
+  });
+
   socket.on('join_room', (roomId) => {
     socket.join(roomId);
     console.log(`User ${socket.id} joined room: ${roomId}`);
@@ -284,6 +326,8 @@ io.on('connection', (socket) => {
         file_url: fileUrl,
         file_name: fileName,
         is_read: false,
+        is_deleted: false,
+        deleted_at: null,
         created_at: new Date().toISOString()
       };
 
@@ -377,9 +421,10 @@ const PORT = Number(process.env.PORT) || 5000;
 server.listen(PORT, async () => {
   console.log(`==================================================`);
   console.log(`🚀 buconnects Server running on http://localhost:${PORT}`);
-  
+
   try {
     const connection = await db.getConnection();
+    await ensureMessageDeletionColumns();
     console.log(` Connected to MySQL Database [${process.env.DB_NAME || 'buconnects_db'}]`);
     connection.release();
   } catch (err) {
