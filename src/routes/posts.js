@@ -205,6 +205,65 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
   }
 });
 
+router.post('/:id/repost', authenticate, async (req, res) => {
+  try {
+    const [sourceRows] = await pool.execute(
+      `SELECT author_name, campus, content, media_urls
+       FROM posts WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (sourceRows.length === 0) {
+      return res.status(404).json({ error: 'Post not found.' });
+    }
+
+    const [userRows] = await pool.execute(
+      'SELECT full_name, campus FROM users WHERE id = ? LIMIT 1',
+      [req.user.id]
+    );
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const source = sourceRows[0];
+    const authorName = userRows[0].full_name || req.user.fullName || 'Campus User';
+    const campus = userRows[0].campus || source.campus || 'Main Campus';
+    let mediaUrls = source.media_urls;
+    if (typeof mediaUrls === 'string') {
+      try {
+        mediaUrls = JSON.parse(mediaUrls);
+      } catch {
+        mediaUrls = [mediaUrls];
+      }
+    }
+
+    const postId = randomUUID();
+    const repostContent = `Reposted from ${source.author_name}\n\n${source.content}`;
+    await pool.execute(
+      `INSERT INTO posts (id, author_id, author_name, campus, content, media_urls)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [postId, req.user.id, authorName, campus, repostContent, mediaUrls ? JSON.stringify(mediaUrls) : null]
+    );
+
+    return res.status(201).json({
+      id: postId,
+      authorId: req.user.id,
+      authorName,
+      campus,
+      content: repostContent,
+      mediaUrls,
+      likesCount: 0,
+      commentsCount: 0,
+      isLikedByMe: false,
+      comments: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('Error reposting post:', error);
+    return res.status(500).json({ error: 'Failed to repost post.' });
+  }
+});
+
 // TOGGLE LIKE ON A POST
 router.post('/:id/like', authenticate, async (req, res) => {
   const postId = req.params.id;

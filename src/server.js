@@ -196,12 +196,29 @@ app.post('/api/posts', async (req, res) => {
 
 // 8. Socket.io Event Handlers
 const onlineUsers = new Map();
+const emitOnlineUsers = () => io.emit('get_online_users', [...onlineUsers.keys()]);
 
 io.on('connection', (socket) => {
   console.log('⚡ Connected client:', socket.id);
 
   socket.on('register_user', (userId) => {
-    onlineUsers.set(String(userId), socket.id);
+    if (!userId) return;
+
+    const normalizedUserId = String(userId);
+    const previousUserId = socket.data.userId;
+    if (previousUserId && previousUserId !== normalizedUserId) {
+      const previousSockets = onlineUsers.get(previousUserId);
+      previousSockets?.delete(socket.id);
+      if (previousSockets?.size === 0) onlineUsers.delete(previousUserId);
+    }
+
+    const userSockets = onlineUsers.get(normalizedUserId) || new Set();
+    userSockets.add(socket.id);
+    onlineUsers.set(normalizedUserId, userSockets);
+    socket.data.userId = normalizedUserId;
+
+    socket.emit('get_online_users', [...onlineUsers.keys()]);
+    emitOnlineUsers();
   });
 
   socket.on('delete_message', async ({ roomId, messageId, userId }) => {
@@ -313,7 +330,26 @@ io.on('connection', (socket) => {
         created_at: new Date().toISOString()
       };
 
-      io.to(roomId).emit('receive_message', fullMessagePayload);
+      const clientMessageId = data.id || data.tempId || null;
+      socket.emit('message_sent', { roomId, clientMessageId });
+      const receiverSocketIds = onlineUsers.get(String(receiverId));
+      if (receiverSocketIds) {
+        for (const receiverSocketId of receiverSocketIds) {
+          const receiverSocket = io.sockets.sockets.get(receiverSocketId);
+          receiverSocket?.emit('message_delivery_probe', { roomId, clientMessageId }, () => {
+            socket.emit('message_delivered', { roomId, clientMessageId });
+          });
+        }
+      }
+
+      if (receiverSocketIds) {
+        for (const receiverSocketId of receiverSocketIds) {
+          const receiverSocket = io.sockets.sockets.get(receiverSocketId);
+          if (!receiverSocket?.rooms.has(roomId)) continue;
+
+          receiverSocket.emit('receive_message', fullMessagePayload);
+        }
+      }
 
       await db.execute(
         `INSERT INTO notifications (user_id, title, message, is_read, created_at)
@@ -369,12 +405,13 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log(`❌ Client disconnected: ${socket.id}`);
-    for (let [userId, socketId] of onlineUsers.entries()) {
-      if (socketId === socket.id) {
-        onlineUsers.delete(userId);
-        break;
-      }
+    const userId = socket.data.userId;
+    const userSockets = userId ? onlineUsers.get(userId) : null;
+    userSockets?.delete(socket.id);
+    if (userId && userSockets?.size === 0) {
+      onlineUsers.delete(userId);
     }
+    emitOnlineUsers();
   });
 });
 
