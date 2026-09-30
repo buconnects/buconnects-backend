@@ -159,15 +159,17 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
     return res.status(400).json({ error: 'Post must contain text or a media file.' });
   }
 
-  let mediaUrlArray = null;
-  let responseMediaUrl = null;
-
-  if (req.file) {
-    responseMediaUrl = await uploadToCloudinary(req.file, 'buconnects/posts');
-    mediaUrlArray = JSON.stringify([responseMediaUrl]); 
-  }
-
+  let stage = req.file ? 'media upload' : 'database insert';
   try {
+    let responseMediaUrl = null;
+    let mediaUrlArray = null;
+
+    if (req.file) {
+      responseMediaUrl = await uploadToCloudinary(req.file, 'buconnects/posts');
+      mediaUrlArray = JSON.stringify([responseMediaUrl]);
+    }
+
+    stage = 'database insert';
     const postId = randomUUID();
 
     await pool.execute(
@@ -193,8 +195,13 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
 
     res.status(201).json(newPost);
   } catch (error) {
-    console.error('Error creating post:', error);
-    res.status(500).json({ error: 'Failed to create post.' });
+    console.error(`Error creating post during ${stage}:`, error);
+    const isMediaUploadFailure = stage === 'media upload';
+    res.status(isMediaUploadFailure ? 502 : 500).json({
+      error: isMediaUploadFailure
+        ? 'Media upload failed. Check the backend Cloudinary configuration and try again.'
+        : 'Failed to save the post.'
+    });
   }
 });
 
