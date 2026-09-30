@@ -2,7 +2,7 @@
 import express from 'express';
 import db from '../config/db.js';
 import { authenticate, authenticate as verifyToken } from '../middlewares/authMiddleware.js'; // Aliased to fix named export
-import { upload } from '../middlewares/upload.middleware.js'; 
+import { upload, buildUploadUrl } from '../middlewares/upload.middleware.js'; 
 import { getUserNotifications, markNotificationsRead } from'../controllers/notification.controller.js';
 import { getSettings, updateSettings, updatePassword } from '../controllers/settings.controller.js';
 
@@ -14,7 +14,7 @@ router.post('/upload', verifyToken, upload.single('file'), (req, res) => {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  const fileUrl = buildUploadUrl(req, req.file.filename);
   const isImage = req.file.mimetype.startsWith('image/');
 
   res.status(200).json({
@@ -155,7 +155,7 @@ router.put('/profile', verifyToken, upload.single('avatar'), async (req, res) =>
 
   try {
     const avatarUrl = req.file
-      ? `/uploads/${req.file.filename}`
+      ? buildUploadUrl(req, req.file.filename)
       : null;
 
     if (avatarUrl) {

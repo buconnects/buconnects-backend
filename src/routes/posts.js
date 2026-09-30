@@ -4,6 +4,7 @@ import multer from 'multer';
 import webpush from 'web-push';
 import pool from '../config/db.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
+import { buildUploadUrl } from '../middlewares/upload.middleware.js';
 import { randomUUID } from 'crypto';
 
 const router = express.Router();
@@ -186,7 +187,7 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
   let responseMediaUrl = null;
 
   if (req.file) {
-    responseMediaUrl = `/uploads/${req.file.filename}`;
+    responseMediaUrl = buildUploadUrl(req, req.file.filename);
     mediaUrlArray = JSON.stringify([responseMediaUrl]); 
   }
 

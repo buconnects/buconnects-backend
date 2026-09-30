@@ -21,6 +21,7 @@ import hostelRoutes from './modules/hostels/hostels.routes.js';
 
 const app = express();
 const server = http.createServer(app);
+app.set('trust proxy', 1);
 
 // 1. Defined Allowed Origins
 const allowedOrigins = [
@@ -57,7 +58,7 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 
-const uploadDir = path.join(process.cwd(), 'uploads');
+const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
