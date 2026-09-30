@@ -6,7 +6,6 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import path from 'path';
-import fs from 'fs';
 import { Server } from 'socket.io';
 import webpush from 'web-push';
 import userRoutes from './routes/user.routes.js';
@@ -57,11 +56,6 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   optionsSuccessStatus: 200
 };
-
-const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 app.use(cors(corsOptions));
 app.use(express.json());

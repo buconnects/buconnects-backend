@@ -1,7 +1,6 @@
 // src/middleware/upload.middleware.js
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { v2 as cloudinary } from 'cloudinary';
 
 cloudinary.config({
@@ -11,11 +10,7 @@ cloudinary.config({
 });
 
 export const resolveUploadDir = () => {
-  const configuredDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(configuredDir)) {
-    fs.mkdirSync(configuredDir, { recursive: true });
-  }
-  return configuredDir;
+  return process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
 };
 
 export const buildUploadUrl = (req, filename) => {
@@ -49,8 +44,6 @@ export const uploadToCloudinary = async (file, folder = 'buconnects') => {
 
   return result.secure_url;
 };
-
-const uploadDir = resolveUploadDir();
 
 const storage = multer.memoryStorage();
 
