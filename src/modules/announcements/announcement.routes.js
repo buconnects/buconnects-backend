@@ -2,7 +2,8 @@ import express from 'express';
 import crypto from 'crypto';
 import webpush from 'web-push';
 import db from '../../config/db.js';
-import { authenticate } from '../../middlewares/authMiddleware.js';
+import { authenticate, authorize } from '../../middlewares/authMiddleware.js';
+import { deleteCloudinaryMedia } from '../../utils/cloudinaryMedia.js';
 
 const router = express.Router();
 
@@ -49,9 +50,9 @@ const sendPushNotificationToAllSubscribers = async (title, body) => {
 };
 
 // POST /api/updates
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res) => {
   try {
-    const { title, summary, content, category, audience, priority } = req.body;
+    const { title, summary, content, category, audience, priority, image_url } = req.body;
     const id = crypto.randomUUID();
     
     // Fall back to summary or title if content isn't passed directly
@@ -59,8 +60,8 @@ router.post('/', authenticate, async (req, res) => {
     const authorId = req.user.id || req.user.userId;
 
     const query = `
-      INSERT INTO announcements (id, title, content, category, audience, priority, author_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO announcements (id, title, content, category, audience, priority, image_url, author_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await db.query(query, [
@@ -70,6 +71,7 @@ router.post('/', authenticate, async (req, res) => {
       category || 'GENERAL',
       audience || 'All students',
       priority || 'Medium',
+      image_url || null,
       authorId
     ]);
 
@@ -82,6 +84,20 @@ router.post('/', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error creating announcement:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id/media', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT image_url FROM announcements WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Campus update not found.' });
+
+    await db.query('UPDATE announcements SET image_url = NULL WHERE id = ?', [req.params.id]);
+    await deleteCloudinaryMedia(rows[0].image_url);
+    return res.status(200).json({ id: req.params.id, image_url: null });
+  } catch (err) {
+    console.error('Error deleting announcement media:', err);
+    return res.status(500).json({ error: 'Failed to delete update image.' });
   }
 });
 

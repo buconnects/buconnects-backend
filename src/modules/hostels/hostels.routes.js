@@ -1,7 +1,8 @@
 import express from 'express';
 import crypto from 'crypto';
 import db from '../../config/db.js';
-import { authenticate } from '../../middlewares/authMiddleware.js';
+import { authenticate, authorize } from '../../middlewares/authMiddleware.js';
+import { deleteCloudinaryMedia } from '../../utils/cloudinaryMedia.js';
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/hostels
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res) => {
   try {
     const { name, location, price_range, amenities, contact_phone, description, cover_image } = req.body;
     const id = crypto.randomUUID();
@@ -37,6 +38,20 @@ router.post('/', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error creating hostel:', err);
     res.status(500).json({ error: 'Failed to create hostel listing' });
+  }
+});
+
+router.delete('/:id/media', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT cover_image FROM hostels WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Hostel listing not found.' });
+
+    await db.query('UPDATE hostels SET cover_image = NULL WHERE id = ?', [req.params.id]);
+    await deleteCloudinaryMedia(rows[0].cover_image);
+    return res.status(200).json({ id: req.params.id, cover_image: null });
+  } catch (err) {
+    console.error('Error deleting hostel media:', err);
+    return res.status(500).json({ error: 'Failed to delete hostel image.' });
   }
 });
 

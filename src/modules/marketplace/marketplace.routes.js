@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import db from '../../config/db.js';
 import { authenticate, authorize } from '../../middlewares/authMiddleware.js';
+import { deleteCloudinaryMedia } from '../../utils/cloudinaryMedia.js';
 
 const router = express.Router();
 
@@ -97,6 +98,37 @@ router.post('/', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res)
   } catch (error) {
     console.error('Error creating marketplace item:', error);
     res.status(500).json({ error: 'Failed to create marketplace item.' });
+  }
+});
+
+router.delete('/:id/media', authenticate, authorize('ADMIN', 'DEVELOPER'), async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT images FROM market_items WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Marketplace item not found.' });
+
+    let imageUrls = rows[0].images;
+    if (typeof imageUrls === 'string') {
+      try {
+        imageUrls = JSON.parse(imageUrls);
+      } catch {
+        imageUrls = [imageUrls];
+      }
+    }
+
+    const currentImages = Array.isArray(imageUrls) ? imageUrls : imageUrls ? [imageUrls] : [];
+    const removedImages = req.body?.imageUrl
+      ? currentImages.filter((url) => url === req.body.imageUrl)
+      : currentImages;
+    const remainingImages = req.body?.imageUrl
+      ? currentImages.filter((url) => url !== req.body.imageUrl)
+      : [];
+
+    await db.query('UPDATE market_items SET images = ? WHERE id = ?', [JSON.stringify(remainingImages), req.params.id]);
+    await deleteCloudinaryMedia(removedImages);
+    return res.status(200).json({ id: req.params.id, images: remainingImages });
+  } catch (error) {
+    console.error('Error deleting marketplace media:', error);
+    return res.status(500).json({ error: 'Failed to delete marketplace images.' });
   }
 });
 

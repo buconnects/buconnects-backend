@@ -1,0 +1,5 @@
+ALTER TABLE announcements
+  ADD COLUMN image_url VARCHAR(500) NULL;
+
+ALTER TABLE events
+  ADD COLUMN image_url VARCHAR(500) NULL;
