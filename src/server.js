@@ -77,7 +77,8 @@ app.use('/api/updates', announcementRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/chat', userRoutes);
 
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+app.use('/uploads', express.static(uploadDir));
 
 // 5. Global Error Handler
 app.use((err, req, res, next) => {
