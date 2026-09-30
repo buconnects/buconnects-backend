@@ -123,8 +123,13 @@ router.get('/history/:roomId', async (req, res) => {
 router.get('/profile', verifyToken, async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT id, full_name AS fullName, email, phone_number AS phoneNumber,
-              campus, role, avatar_url AS avatarUrl, created_at AS createdAt
+      `SELECT id,
+              full_name AS fullName, full_name AS name, full_name AS full_name,
+              email,
+              phone_number AS phoneNumber, phone_number AS phone_number,
+              campus, role,
+              avatar_url AS avatarUrl, avatar_url AS avatar_url,
+              created_at AS createdAt, created_at AS created_at
        FROM users WHERE id = ? LIMIT 1`,
       [req.user.id]
     );
@@ -150,7 +155,7 @@ router.put('/profile', verifyToken, upload.single('avatar'), async (req, res) =>
 
   try {
     const avatarUrl = req.file
-      ? `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`
+      ? `/uploads/${req.file.filename}`
       : null;
 
     if (avatarUrl) {
@@ -166,8 +171,13 @@ router.put('/profile', verifyToken, upload.single('avatar'), async (req, res) =>
     }
 
     const [rows] = await db.execute(
-      `SELECT id, full_name AS fullName, email, phone_number AS phoneNumber,
-              campus, role, avatar_url AS avatarUrl, created_at AS createdAt
+      `SELECT id,
+              full_name AS fullName, full_name AS name, full_name AS full_name,
+              email,
+              phone_number AS phoneNumber, phone_number AS phone_number,
+              campus, role,
+              avatar_url AS avatarUrl, avatar_url AS avatar_url,
+              created_at AS createdAt, created_at AS created_at
        FROM users WHERE id = ? LIMIT 1`,
       [req.user.id]
     );

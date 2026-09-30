@@ -126,7 +126,7 @@ app.get('/', async (req, res) => {
   }
 });
 
-/*
+
 app.get('/api/posts', async (req, res) => {
   try {
     const [posts] = await db.query(
@@ -196,7 +196,7 @@ app.post('/api/posts', async (req, res) => {
     res.status(500).json({ error: 'Server failed to save post.' });
   }
 });
-*/
+
 
 // 8. Socket.io Event Handlers
 const onlineUsers = new Map();
