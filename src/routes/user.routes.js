@@ -2,26 +2,31 @@
 import express from 'express';
 import db from '../config/db.js';
 import { authenticate, authenticate as verifyToken } from '../middlewares/authMiddleware.js'; // Aliased to fix named export
-import { upload, buildUploadUrl } from '../middlewares/upload.middleware.js'; 
+import { upload, uploadToCloudinary } from '../middlewares/upload.middleware.js'; 
 import { getUserNotifications, markNotificationsRead } from'../controllers/notification.controller.js';
 import { getSettings, updateSettings, updatePassword } from '../controllers/settings.controller.js';
 
 const router = express.Router();
 
 // 1. Upload file attachment
-router.post('/upload', verifyToken, upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const fileUrl = await uploadToCloudinary(req.file, 'buconnects/files');
+    const isImage = req.file.mimetype.startsWith('image/');
+
+    res.status(200).json({
+      fileUrl,
+      fileName: req.file.originalname,
+      messageType: isImage ? 'image' : 'file'
+    });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ error: error.message || 'File upload failed.' });
   }
-
-  const fileUrl = buildUploadUrl(req, req.file.filename);
-  const isImage = req.file.mimetype.startsWith('image/');
-
-  res.status(200).json({
-    fileUrl,
-    fileName: req.file.originalname,
-    messageType: isImage ? 'image' : 'file'
-  });
 });
 
 // 2. REST route to mark conversation messages as read
@@ -155,7 +160,7 @@ router.put('/profile', verifyToken, upload.single('avatar'), async (req, res) =>
 
   try {
     const avatarUrl = req.file
-      ? buildUploadUrl(req, req.file.filename)
+      ? await uploadToCloudinary(req.file, 'buconnects/avatars')
       : null;
 
     if (avatarUrl) {

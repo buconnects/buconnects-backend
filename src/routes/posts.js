@@ -1,10 +1,8 @@
 import express from 'express';
-import path from 'path';
-import multer from 'multer';
 import webpush from 'web-push';
 import pool from '../config/db.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
-import { buildUploadUrl } from '../middlewares/upload.middleware.js';
+import { upload, uploadToCloudinary } from '../middlewares/upload.middleware.js';
 import { randomUUID } from 'crypto';
 
 const router = express.Router();
@@ -75,28 +73,6 @@ const notifyPostAuthor = async ({ postId, actorId, title, message }) => {
     console.error('Notification error:', err);
   }
 };
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image and video files are supported.'));
-    }
-  }
-});
 
 // GET ALL POSTS
 router.get('/', optionalAuth, async (req, res) => {
@@ -187,7 +163,7 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
   let responseMediaUrl = null;
 
   if (req.file) {
-    responseMediaUrl = buildUploadUrl(req, req.file.filename);
+    responseMediaUrl = await uploadToCloudinary(req.file, 'buconnects/posts');
     mediaUrlArray = JSON.stringify([responseMediaUrl]); 
   }
 
