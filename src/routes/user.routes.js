@@ -60,6 +60,9 @@ router.get('/conversations/:userId', async (req, res) => {
         u.email,
         u.avatar_url AS avatar_url,
         u.avatar_url AS avatarUrl,
+        u.is_online AS isOnline,
+        u.last_seen AS lastSeen,
+        u.last_seen AS last_seen,
         m.message AS lastMessage,
         m.created_at AS lastMessageTime,
         COALESCE(
@@ -90,6 +93,27 @@ router.get('/conversations/:userId', async (req, res) => {
   } catch (error) {
     console.error('Error fetching conversations:', error);
     res.status(500).json({ error: 'Failed to fetch conversations' });
+  }
+});
+
+// GET /api/users/status/:userId
+router.get('/status/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, full_name AS name, is_online AS isOnline, last_seen AS lastSeen, last_seen AS last_seen 
+       FROM users WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.status(200).json(rows[0]);
+  } catch (error) {
+    console.error('Error fetching user status:', error);
+    res.status(500).json({ error: 'Failed to retrieve user status' });
   }
 });
 
@@ -202,7 +226,7 @@ router.put('/settings/password', verifyToken, updatePassword);
 router.get('/', verifyToken, async (req, res) => {
   try {
     const [users] = await db.query(
-      'SELECT id, full_name AS name, email, campus, is_online AS isOnline FROM users'
+      'SELECT id, full_name AS name, email, campus, is_online AS isOnline, last_seen AS lastSeen, last_seen AS last_seen FROM users'
     );
     res.status(200).json(users);
   } catch (error) {

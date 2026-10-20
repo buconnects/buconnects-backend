@@ -201,7 +201,7 @@ const emitOnlineUsers = () => io.emit('get_online_users', [...onlineUsers.keys()
 io.on('connection', (socket) => {
   console.log('⚡ Connected client:', socket.id);
 
-  socket.on('register_user', (userId) => {
+  socket.on('register_user', async (userId) => {
     if (!userId) return;
 
     const normalizedUserId = String(userId);
@@ -209,16 +209,71 @@ io.on('connection', (socket) => {
     if (previousUserId && previousUserId !== normalizedUserId) {
       const previousSockets = onlineUsers.get(previousUserId);
       previousSockets?.delete(socket.id);
-      if (previousSockets?.size === 0) onlineUsers.delete(previousUserId);
+      if (previousSockets?.size === 0) {
+        onlineUsers.delete(previousUserId);
+        const disconnectedAt = new Date().toISOString();
+        try {
+          await db.execute('UPDATE users SET is_online = FALSE, last_seen = NOW() WHERE id = ?', [previousUserId]);
+        } catch (e) {
+          console.error('Error updating last_seen on switch:', e.message);
+        }
+        io.emit('user_status_change', {
+          userId: previousUserId,
+          isOnline: false,
+          lastSeen: disconnectedAt,
+        });
+      }
     }
 
     const userSockets = onlineUsers.get(normalizedUserId) || new Set();
+    const wasOffline = userSockets.size === 0;
     userSockets.add(socket.id);
     onlineUsers.set(normalizedUserId, userSockets);
     socket.data.userId = normalizedUserId;
 
+    if (wasOffline) {
+      try {
+        await db.execute('UPDATE users SET is_online = TRUE WHERE id = ?', [normalizedUserId]);
+      } catch (e) {
+        console.error('Error updating is_online on connect:', e.message);
+      }
+      io.emit('user_status_change', {
+        userId: normalizedUserId,
+        isOnline: true,
+        lastSeen: null,
+      });
+    }
+
     socket.emit('get_online_users', [...onlineUsers.keys()]);
     emitOnlineUsers();
+  });
+
+  socket.on('check_user_status', async ({ userId }, callback) => {
+    if (!userId) return;
+    const normalizedUserId = String(userId);
+    const isOnline = onlineUsers.has(normalizedUserId) && (onlineUsers.get(normalizedUserId)?.size > 0);
+    let lastSeen = null;
+
+    try {
+      const [rows] = await db.execute('SELECT last_seen, is_online FROM users WHERE id = ? LIMIT 1', [normalizedUserId]);
+      if (rows.length > 0 && rows[0].last_seen) {
+        lastSeen = new Date(rows[0].last_seen).toISOString();
+      }
+    } catch (e) {
+      console.error('Error checking user status:', e.message);
+    }
+
+    const payload = {
+      userId: normalizedUserId,
+      isOnline,
+      lastSeen: isOnline ? null : lastSeen,
+    };
+
+    if (typeof callback === 'function') {
+      callback(payload);
+    } else {
+      socket.emit('user_status_response', payload);
+    }
   });
 
   socket.on('delete_message', async ({ roomId, messageId, userId }) => {
@@ -403,17 +458,40 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log(`❌ Client disconnected: ${socket.id}`);
     const userId = socket.data.userId;
     const userSockets = userId ? onlineUsers.get(userId) : null;
     userSockets?.delete(socket.id);
     if (userId && userSockets?.size === 0) {
       onlineUsers.delete(userId);
+      const disconnectedAt = new Date().toISOString();
+      try {
+        await db.execute('UPDATE users SET is_online = FALSE, last_seen = NOW() WHERE id = ?', [userId]);
+      } catch (e) {
+        console.error('Error updating last_seen on disconnect:', e.message);
+      }
+      io.emit('user_status_change', {
+        userId,
+        isOnline: false,
+        lastSeen: disconnectedAt,
+      });
     }
     emitOnlineUsers();
   });
 });
+
+async function ensureDatabaseSchema() {
+  try {
+    const [cols] = await db.query("SHOW COLUMNS FROM users LIKE 'last_seen'");
+    if (cols.length === 0) {
+      await db.query("ALTER TABLE users ADD COLUMN last_seen DATETIME NULL DEFAULT NULL");
+      console.log(" Added 'last_seen' column to 'users' table.");
+    }
+  } catch (err) {
+    console.warn("Schema initialization notice:", err.message);
+  }
+}
 
 app.post('/api/notifications/subscribe', async (req, res) => {
   const { userId, subscription } = req.body;
@@ -445,6 +523,7 @@ server.listen(PORT, async () => {
     const connection = await db.getConnection();
     console.log(` Connected to MySQL Database [${process.env.DB_NAME || 'buconnects_db'}]`);
     connection.release();
+    await ensureDatabaseSchema();
   } catch (err) {
     console.error(`❌ MySQL Connection Error:`, err.message);
   }
